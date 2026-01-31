@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>BuhayOFW AI</title>
+  <style>
+    .hidden { display: none !important; }
+    body { font-family: system-ui, Arial; margin: 0; background:#0b0f14; color:#e8eef6; }
+    .wrap { max-width: 860px; margin: 0 auto; padding: 20px; }
+    .card { background:#111823; border:1px solid #1d2a3a; border-radius:16px; padding:18px; }
+    textarea { width:100%; min-height:110px; border-radius:12px; border:1px solid #243447;
+      background:#0b1220; color:#e8eef6; padding:12px; font-size:15px; }
+    button { border:0; border-radius:12px; padding:10px 14px; font-weight:600; cursor:pointer; }
+    .row { display:flex; gap:10px; margin-top:10px; align-items:center; }
+    .btn { background:#3b82f6; color:white; }
+    .btn:disabled { opacity:0.6; cursor:not-allowed; }
+    .out { white-space:pre-wrap; margin-top:14px; padding:12px; border-radius:12px;
+      background:#0b1220; border:1px solid #243447; min-height:60px; }
+    .muted { color:#9fb2c7; font-size:13px; margin-top:8px; }
+	.btn:disabled {
+  background: #475569;
+  opacity: 0.8;
+  cursor: not-allowed;
+}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1 style="margin:0 0 12px 0;">BuhayOFW AI</h1>
+    <div class="card">
+
+   
+    <div class="tip hidden">Next step: connect this UI to <code>/ask</code>.</div>
+    </div>
+  </div>
+
+<script>
+  const q = document.getElementById('q');
+  const out = document.getElementById('out');
+  const btn = document.getElementById('send');
+  const status = document.getElementById('status');
+const followBtn = document.getElementById('follow');
+const newBtn = document.getElementById('newq');
+
+function setPostAnswerActionsEnabled(enabled) {
+  followBtn.disabled = !enabled;
+  newBtn.disabled = !enabled;
+}
+
+// Follow-up: just focus textbox and put cursor at end
+followBtn.addEventListener('click', () => {
+  q.focus();
+  q.setSelectionRange(q.value.length, q.value.length);
+});
+
+// New question: clear textbox and focus
+newBtn.addEventListener('click', () => {
+  q.value = "";
+  q.focus();
+});
+
+  function setBusy(busy, msg="") {
+    btn.disabled = busy;
+    status.textContent = msg;
+  }
+
+let isLoading = false;
+let abortController = null;
+
+async function send() {
+  if (isLoading) return;
+
+  const text = q.value.trim();
+  if (!text) return;
+
+  // Abort any previous in-flight request
+  if (abortController) abortController.abort();
+  abortController = new AbortController();
+
+  isLoading = true;
+  out.textContent = "Sending...";
+  setBusy(true, "Working...");
+  setPostAnswerActionsEnabled(false);
+
+  try {
+    const resp = await fetch("/ask", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question: text }),
+      signal: abortController.signal,
+    });
+
+    const data = await resp.json();
+
+    if (!resp.ok) {
+      out.textContent = "Error: " + (data.error || "Request failed");
+    } else {
+      out.textContent = data.answer || "(No answer returned)";
+    setPostAnswerActionsEnabled(true);
+    }
+  } catch (err) {
+    if (err.name === "AbortError") return;
+    out.textContent = "Network error: " + err.message;
+  } finally {
+    isLoading = false;
+    setBusy(false, "");
+  }
+}
+
+  btn.addEventListener('click', send);
+  q.addEventListener('keydown', (e) => {
+  if (isLoading) return;
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) send();
+});
+
+</script>
+</body>
+</html>

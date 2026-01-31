@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>BuhayOFW AI</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+
+<body>
+  <!-- Fixed Header -->
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <div class="brand-title">BuhayOFW AI</div>
+      </div>
+      <div class="topbar-right">
+        <!-- later: logo/nav/profile -->
+      </div>
+    </div>
+  </header>
+
+  <main class="page">
+
+    <!-- HOME / FIRST PROMPT (no big container card) -->
+    <section id="hero" class="hero hero-home">
+      <div class="homeGrid">
+        <div class="mascotWrap">
+          <!-- Optional: replace with your real mascot image later -->
+          <img class="mascotImg" src="/v2/mascot.png" alt="Mascot" onerror="this.style.display='none'">
+          <div class="mascotFallback" aria-hidden="true"></div>
+        </div>
+
+        <div class="homeRight">
+          <div class="speechTitle">ANO ANG GUSTO MO<br/>ITANONG?</div>
+
+          <div class="inputBubble">
+            <div class="youLabel">You:</div>
+            <div class="inputRow">
+              <textarea id="q0" class="textbox textbox-hero" placeholder="Itanong mo dito..."></textarea>
+              <button id="send0" class="sendbtn sendbtn-inbox" title="Send"></button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- THREAD -->
+    <section id="thread" class="thread hidden">
+      <div id="messages" class="messages"></div>
+
+      <!-- Composer (follow-up) -->
+      <div class="composer">
+        <div class="inputRow inputRow-follow">
+          <textarea id="q" class="textbox" placeholder="Follow up question..."></textarea>
+          <button id="send" class="sendbtn sendbtn-inbox" title="Send"></button>
+        </div>
+
+        <div class="afterRow">
+          <button id="newTopic" class="btn secondary hidden" type="button">New topic</button>
+          <span id="status" class="status"></span>
+        </div>
+
+        <!-- Later: Recent questions/history goes here -->
+        <div id="history" class="history hidden">
+          <div class="history-title">Recent questions</div>
+          <div id="historyList"></div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <script src="./app.js"></script>
+</body>
+</html>

@@ -1,0 +1,254 @@
+cat > app.js <<'EOF'
+/**
+ * v2 front-end
+ * Goals:
+ * - Stream as TEXT (no markdown conversion while streaming) so:
+ *   - no asterisks flashing
+ *   - newlines show immediately (with CSS white-space: pre-wrap)
+ * - Once done, do a small "pretty" markdown pass (bold + lists) to make it readable.
+ * - Hide "Thinking..." the moment first chunk arrives.
+ * - Add cheap context for follow-ups (last Q/A only, capped).
+ */
+
+const hero = document.getElementById('hero');
+const chat = document.getElementById('chat');
+const thread = document.getElementById('thread');
+
+const qHome = document.getElementById('q');
+const sendHome = document.getElementById('send');
+const statusHome = document.getElementById('status');
+
+const qChat = document.getElementById('q2');
+const sendChat = document.getElementById('send2');
+const statusChat = document.getElementById('status2');
+
+let isBusy = false;
+
+// minimal conversation memory (cheap)
+const history = []; // {role:'user'|'assistant', content:string}
+const MAX_CONTEXT_CHARS = 1200; // keep cheap
+
+function setBusy(on) {
+  isBusy = on;
+  sendHome.disabled = on;
+  sendChat.disabled = on;
+}
+
+function showStatus(el, text) {
+  el.textContent = text || '';
+}
+
+function addMessage(role, text) {
+  const row = document.createElement('div');
+  row.className = `msgRow ${role === 'user' ? 'msgRow--user' : 'msgRow--ai'}`;
+
+  const bubble = document.createElement('div');
+  bubble.className = `msg ${role === 'user' ? 'msg--user' : 'msg--ai'}`;
+
+  // IMPORTANT: use textContent so \n shows as text while streaming
+  bubble.textContent = text || '';
+
+  row.appendChild(bubble);
+  thread.appendChild(row);
+  thread.scrollTop = thread.scrollHeight;
+
+  return bubble;
+}
+
+function ensureChatMode() {
+  if (!chat.classList.contains('hidden')) return;
+  hero.classList.add('hidden');
+  chat.classList.remove('hidden');
+}
+
+function normalizeContextText(s) {
+  return (s || '').replace(/\s+/g, ' ').trim();
+}
+
+function buildCheapContext(currentQuestion) {
+  // Use only last 2 turns (user+assistant), capped, to keep costs low.
+  // If none, just return the question.
+  const lastUser = [...history].reverse().find(h => h.role === 'user');
+  const lastAsst = [...history].reverse().find(h => h.role === 'assistant');
+
+  if (!lastUser || !lastAsst) return currentQuestion;
+
+  const prevQ = normalizeContextText(lastUser.content).slice(0, 400);
+  const prevA = normalizeContextText(lastAsst.content).slice(0, 700);
+
+  const ctx =
+`Previous question: ${prevQ}
+Previous answer: ${prevA}
+
+Now answer this follow-up (keep it related to the previous topic when relevant):
+${currentQuestion}`.slice(0, MAX_CONTEXT_CHARS);
+
+  return ctx;
+}
+
+// tiny markdown prettifier (run ONLY after stream ends)
+function escapeHtml(str) {
+  return str.replace(/[&<>"']/g, (c) => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[c]));
+}
+
+function renderMiniMarkdown(raw) {
+  // Supports:
+  // - paragraphs
+  // - ordered lists like "1. item"
+  // - unordered lists "- item"
+  // - **bold**
+  // Everything else stays escaped.
+  const lines = raw.replace(/\r\n/g, '\n').split('\n');
+
+  let out = '';
+  let i = 0;
+
+  function closeList(type) {
+    if (type === 'ol') out += '</ol>';
+    if (type === 'ul') out += '</ul>';
+  }
+
+  let openList = null;
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    const olMatch = line.match(/^\s*(\d+)\.\s+(.*)$/);
+    const ulMatch = line.match(/^\s*[-•]\s+(.*)$/);
+
+    if (olMatch) {
+      if (openList !== 'ol') { if (openList) closeList(openList); openList = 'ol'; out += '<ol>'; }
+      out += `<li>${escapeHtml(olMatch[2])}</li>`;
+      i++; continue;
+    }
+
+    if (ulMatch) {
+      if (openList !== 'ul') { if (openList) closeList(openList); openList = 'ul'; out += '<ul>'; }
+      out += `<li>${escapeHtml(ulMatch[1])}</li>`;
+      i++; continue;
+    }
+
+    if (openList) { closeList(openList); openList = null; }
+
+    if (line.trim() === '') {
+      out += '';
+      i++; continue;
+    }
+
+    out += `<p>${escapeHtml(line)}</p>`;
+    i++;
+  }
+
+  if (openList) closeList(openList);
+
+  // bold: **text**
+  out = out.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  return out;
+}
+
+async function ask(question, statusEl) {
+  if (isBusy) return;
+  const q = (question || '').trim();
+  if (!q) return;
+
+  ensureChatMode();
+
+  // Add user message bubble
+  addMessage('user', q);
+  history.push({ role: 'user', content: q });
+
+  setBusy(true);
+  showStatus(statusEl, 'Thinking...');
+
+  // Create AI bubble that will stream into
+  const aiBubble = addMessage('assistant', '');
+
+  // If this is a follow-up (chat mode already), include cheap context
+  // We decide: if at least 2 messages exist already, treat as follow-up.
+  const payloadQuestion = history.length >= 2 ? buildCheapContext(q) : q;
+
+  try {
+    const res = await fetch('/ask', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question: payloadQuestion })
+    });
+
+    if (!res.ok) {
+      const t = await res.text();
+      showStatus(statusEl, '');
+      aiBubble.textContent = `Error: ${res.status} ${res.statusText}\n${t}`;
+      history.push({ role: 'assistant', content: aiBubble.textContent });
+      return;
+    }
+
+    // Stream response
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+
+    let gotFirstChunk = false;
+    let full = '';
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+
+      const chunk = decoder.decode(value, { stream: true });
+      if (!chunk) continue;
+
+      if (!gotFirstChunk) {
+        gotFirstChunk = true;
+        // Hide thinking as soon as typing starts
+        showStatus(statusEl, '');
+      }
+
+      full += chunk;
+
+      // Stream as TEXT (no markdown conversion yet)
+      aiBubble.textContent = full;
+      thread.scrollTop = thread.scrollHeight;
+    }
+
+    // After done, prettify (no asterisks will "flash" during typing)
+    const finalText = full.trim();
+    aiBubble.innerHTML = renderMiniMarkdown(finalText);
+    history.push({ role: 'assistant', content: finalText });
+  } catch (e) {
+    showStatus(statusEl, '');
+    aiBubble.textContent = `Error: ${e?.message || e}`;
+    history.push({ role: 'assistant', content: aiBubble.textContent });
+  } finally {
+    setBusy(false);
+  }
+}
+
+// HOME send
+sendHome.addEventListener('click', () => {
+  const val = qHome.value;
+  qHome.value = '';
+  ask(val, statusHome);
+});
+
+qHome.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendHome.click();
+  }
+});
+
+// CHAT send
+sendChat.addEventListener('click', () => {
+  const val = qChat.value;
+  qChat.value = '';
+  ask(val, statusChat);
+});
+
+qChat.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendChat.click();
+  }
+});
+EOF

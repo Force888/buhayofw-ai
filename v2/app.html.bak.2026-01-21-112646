@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>BuhayOFW AI</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="wrap">
+    <header class="top">
+      <div class="brand">
+        <div class="brandTitle">BuhayOFW AI</div>
+        <div class="brandSub">Ask in Tagalog or English</div>
+      </div>
+    </header>
+
+    <!-- START SCREEN (big, clean, no history, no extra buttons) -->
+    <section id="startScreen" class="card">
+      <div class="hint">Ask a question:</div>
+      <textarea id="startInput" class="input inputBig" placeholder="Halimbawa: Ano ang dapat gawin kapag masakit ang binti habang naglalakad?"></textarea>
+      <div class="row">
+        <button id="startSend" class="btn primary">Send</button>
+        <div id="startStatus" class="status"></div>
+      </div>
+      <div class="microHint">Tip: Press <b>Enter</b> to send, <b>Shift+Enter</b> for a new line.</div>
+    </section>
+
+    <!-- CHAT SCREEN (after Send) -->
+    <section id="chatScreen" class="card hidden">
+      <div class="sectionLabel">Your question</div>
+      <div id="fixedQuestion" class="bubble questionBubble"></div>
+
+      <div class="sectionLabel" style="margin-top:14px;">Answer</div>
+      <div id="thinking" class="thinking hidden">
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        <span class="thinkingText">Thinking…</span>
+      </div>
+      <div id="answer" class="bubble answerBubble"></div>
+
+      <!-- Follow-up composer (ONLY appears after answer finished) -->
+      <div id="followupWrap" class="followupWrap hidden">
+        <textarea id="followInput" class="input inputSmall" placeholder="Ask a follow-up…"></textarea>
+        <div class="row">
+          <button id="followSend" class="btn primary">Send</button>
+          <button id="newChat" class="btn">New question</button>
+          <div id="followStatus" class="status"></div>
+        </div>
+
+        <!-- History appears ONLY after at least 1 answered question -->
+        <div id="historyWrap" class="historyWrap">
+          <div class="sectionLabel" style="margin-top:16px;">Recent questions</div>
+          <div id="historyList" class="historyList"></div>
+          <div id="historyEmpty" class="muted">No recent questions yet.</div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script src="./app.js"></script>
+</body>
+</html>

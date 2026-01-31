@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>BuhayOFW AI</title>
+  <link rel="stylesheet" href="/ui.css" />
+  <style>
+    /* Bubble chat styles (kept here so it works even if ui.css is older) */
+    .chat { display:flex; flex-direction:column; gap:10px; margin-top:14px; }
+    .bubble { max-width: 88%; padding:12px 14px; border-radius:16px; line-height:1.45; white-space:pre-wrap; word-break:break-word; }
+    .bubble.user { align-self:flex-end; border-top-right-radius:6px; background: rgba(94,126,176,.25); border:1px solid rgba(94,126,176,.35); }
+    .bubble.ai   { align-self:flex-start; border-top-left-radius:6px; background: rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.10); }
+    .bubble.meta { align-self:center; font-size:.9rem; opacity:.8; background: transparent; border:none; padding:4px 0; }
+    .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    .muted { opacity:.85; }
+    .status { min-height: 22px; margin-top:10px; opacity:.85; }
+    .tip { margin-top: 14px; opacity: .85; }
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+    <h1>BuhayOFW AI</h1>
+
+    <div class="muted" style="margin-top:-6px">
+      <b>Tagalog-first</b> AI assistant • simple, clear, and helpful<br/>
+      Pwede Tagalog o English.<br/>
+      Health • Legal • Self-help<br/>
+      <b>Not a doctor/lawyer</b> — for guidance only.
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <label for="q" class="muted"><b>Ask a question (Tagalog or English):</b></label>
+      <textarea id="q" rows="4" placeholder="Halimbawa: Ano ang dapat gawin kapag masakit ang binti habang naglalakad?"></textarea>
+
+      <div class="row" style="margin-top:10px">
+        <button id="send" class="btn" type="button">Send</button>
+        <div id="status" class="status"></div>
+      </div>
+
+      <div id="chat" class="chat"></div>
+
+      <div class="tip">Tip: Press Ctrl+Enter to send. Results may be imperfect—double-check important info.</div>
+    </div>
+  </div>
+
+<script>
+  const q = document.getElementById('q');
+  const sendBtn = document.getElementById('send');
+  const statusEl = document.getElementById('status');
+  const chat = document.getElementById('chat');
+
+  function setStatus(t){ statusEl.textContent = t || ''; }
+
+  function addBubble(role, text){
+    const div = document.createElement('div');
+    div.className = 'bubble ' + role;
+    div.textContent = text;
+    chat.appendChild(div);
+    div.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }
+
+  async function ask(){
+    const text = (q.value || '').trim();
+    if(!text) return;
+
+    // Put question into chat, keep input below, then clear input
+    addBubble('user', text);
+    q.value = '';
+    q.focus();
+
+    setStatus('Thinking...');
+    sendBtn.disabled = true;
+
+    try{
+      const r = await fetch('/ask', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question: text })
+      });
+
+      // If server returns non-JSON error, show it safely
+      const contentType = r.headers.get('content-type') || '';
+      let data;
+      if(contentType.includes('application/json')){
+        data = await r.json();
+      } else {
+        const raw = await r.text();
+        throw new Error(raw || ('HTTP ' + r.status));
+      }
+
+      const answer = (data && (data.answer || data.text)) ? (data.answer || data.text) : JSON.stringify(data, null, 2);
+      addBubble('ai', answer);
+      setStatus('');
+
+    }catch(e){
+      addBubble('ai', 'Error: ' + (e && e.message ? e.message : e));
+      setStatus('');
+    }finally{
+      sendBtn.disabled = false;
+      q.focus();
+    }
+  }
+
+  sendBtn.addEventListener('click', ask);
+  q.addEventListener('keydown', (e) => {
+    if(e.ctrlKey && e.key === 'Enter') ask();
+  });
+
+  // focus on load
+  q.focus();
+</script>
+
+</body>
+</html>

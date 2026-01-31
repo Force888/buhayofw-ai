@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="tl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>BuhayOFW AI</title>
+<link rel="stylesheet" href="./ui.css?v=3" />
+
+</head>
+
+<body>
+  <!-- Fixed Header -->
+  <header id="topbar">
+    <div class="topbar-left">
+      <!-- If logo file exists, we’ll use this. Otherwise the text fallback shows. -->
+      <img id="logo" src="./assets/logo-apple.png" alt="BuhayOFW" onerror="this.style.display='none'; document.getElementById('logoText').style.display='block';" />
+      <div id="logoText" style="display:none;">BUHAYOFW.com</div>
+    </div>
+
+    <div class="topbar-right">
+      <button id="menuBtn" aria-label="Menu" type="button">☰</button>
+    </div>
+
+    <nav id="menuDropdown" class="menu hidden" aria-label="Menu Dropdown">
+      <a id="legacyLink" href="https://buhayofw.com" target="_blank" rel="noopener">Legacy site</a>
+    </nav>
+  </header>
+
+  <!-- Main App -->
+  <main id="app">
+    <!-- HOME VIEW (empty state) -->
+<section id="homeView">
+  <div id="homeCenter">
+    <img id="homeMascot"
+         src="./assets/mascot-head.png"
+         alt=""
+         onerror="this.style.display='none';" />
+
+    <h1 id="homeTitle">Ano ang gusto mong itanong?</h1>
+  </div>
+</section>
+
+
+    <!-- THREAD VIEW (after first question) -->
+    <section id="threadView" class="hidden">
+      <div id="messages"></div>
+    </section>
+  </main>
+
+  <!-- Fixed Composer -->
+<footer id="composerBar">
+  <div id="composerWrap">
+    <form id="composerForm" autocomplete="off">
+      <textarea
+        id="composerInput"
+        rows="1"
+        placeholder="Itanong mo dito…"
+        aria-label="Question input"
+      ></textarea>
+
+      <button id="sendBtn" type="submit" aria-label="Send">➤</button>
+    </form>
+
+    <!-- Only visible in thread mode -->
+    <button id="newTopicBtn" class="hidden" type="button">New topic</button>
+  </div>
+</footer>
+
+
+  <script src="./app.js"></script>
+</body>
+</html>

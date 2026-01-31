@@ -1,0 +1,236 @@
+const hero = document.getElementById('hero');
+const thread = document.getElementById('thread');
+const messages = document.getElementById('messages');
+
+const q0 = document.getElementById('q0');
+const send0 = document.getElementById('send0');
+
+const q = document.getElementById('q');
+const send = document.getElementById('send');
+
+const status = document.getElementById('status');
+const newTopic = document.getElementById('newTopic');
+
+let busy = false;
+
+function setBusy(on, labelText=""){
+  busy = on;
+  send0.disabled = on;
+  send.disabled = on;
+  status.textContent = labelText || "";
+}
+
+function showThread(){
+  hero.classList.add('hidden');
+  thread.classList.remove('hidden');
+}
+
+function escapeHtml(s){
+  return (s||"")
+    .replaceAll("&","&amp;")
+    .replaceAll("<","&lt;")
+    .replaceAll(">","&gt;");
+}
+
+/**
+ * Convert minimal markdown to HTML:
+ * - supports ordered lists, unordered lists
+ * - supports **bold** and *italic*
+ * - supports paragraphs + blank lines
+ *
+ * IMPORTANT FIX:
+ * We use trimStart() so "  1. item" still becomes an ordered list.
+ */
+function mdToHtml(md){
+  const lines = (md||"").split("\n");
+  let html = "";
+  let inUl = false;
+  let inOl = false;
+
+  function closeLists(){
+    if(inUl){ html += "</ul>"; inUl=false; }
+    if(inOl){ html += "</ol>"; inOl=false; }
+  }
+
+  for(const raw of lines){
+    const line = raw.trimEnd();
+    const l = line.trimStart(); // FIX: detect lists even with leading spaces
+
+    // blank line
+    if(l.trim() === ""){
+      closeLists();
+      html += "<p></p>";
+      continue;
+    }
+
+    // ordered list: "1. item"
+    const olMatch = l.match(/^(\d+)\.\s+(.*)$/);
+    if(olMatch){
+      if(inUl){ html += "</ul>"; inUl=false; }
+      if(!inOl){ html += "<ol>"; inOl=true; }
+      html += "<li>" + inlineMd(olMatch[2]) + "</li>";
+      continue;
+    }
+
+    // unordered list: "- item" or "* item"
+    const ulMatch = l.match(/^[-*]\s+(.*)$/);
+    if(ulMatch){
+      if(inOl){ html += "</ol>"; inOl=false; }
+      if(!inUl){ html += "<ul>"; inUl=true; }
+      html += "<li>" + inlineMd(ulMatch[1]) + "</li>";
+      continue;
+    }
+
+    // normal paragraph line
+    closeLists();
+    html += "<p>" + inlineMd(l) + "</p>";
+  }
+
+  closeLists();
+  return html;
+
+  function inlineMd(s){
+    let t = escapeHtml(s);
+
+    // bold **text**
+    t = t.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+    // italics *text* (basic)
+    t = t.replace(/\*(.+?)\*/g, "<em>$1</em>");
+
+    return t;
+  }
+}
+
+/**
+ * Make a "typing text" version:
+ * - removes markdown markers so user does NOT see asterisks while typing
+ * - keeps list prefixes so it still looks structured while typing
+ */
+function mdToPlainForTyping(md){
+  const lines = (md||"").split("\n");
+  const out = [];
+
+  for(const raw of lines){
+    const line = raw.replace(/\r/g,"");
+    const l = line.trimStart();
+
+    // Keep list markers, but remove asterisks used for styling
+    // **bold** -> bold, *italic* -> italic
+    let cleaned = l.replace(/\*\*(.+?)\*\*/g, "$1").replace(/\*(.+?)\*/g, "$1");
+
+    out.push(cleaned);
+  }
+  return out.join("\n");
+}
+
+function addMsg(role, text, asHtml=false){
+  const row = document.createElement('div');
+  row.className = 'msg ' + role;
+
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble';
+
+  if(asHtml){
+    bubble.innerHTML = text;
+  }else{
+    bubble.textContent = text;
+  }
+
+  row.appendChild(bubble);
+  messages.appendChild(row);
+  row.scrollIntoView({ behavior:'smooth', block:'end' });
+
+  return bubble;
+}
+
+async function typewriter(bubble, fullText, speed=6){
+  bubble.textContent = "";
+  for(let i=0;i<fullText.length;i++){
+    bubble.textContent += fullText[i];
+    bubble.parentElement.scrollIntoView({ behavior:'auto', block:'end' });
+    await new Promise(r => setTimeout(r, speed));
+  }
+}
+
+async function ask(questionText){
+  const qt = (questionText||"").trim();
+  if(!qt || busy) return;
+
+  showThread();
+  setBusy(true, "Thinking...");
+
+  // user message
+  addMsg('user', qt);
+
+  // AI placeholder bubble (shows only while waiting)
+  const aiBubble = addMsg('ai', "Thinking...");
+
+  try{
+    const res = await fetch('/ask', {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json' },
+      body: JSON.stringify({ question: qt })
+    });
+
+    const data = await res.json();
+    const answer = (data && (data.answer || data.text || data.response))
+      ? (data.answer || data.text || data.response)
+      : "";
+
+    if(!answer){
+      // stop thinking
+      setBusy(false, "");
+      aiBubble.textContent = "Sorry — I didn’t get an answer from the server.";
+      newTopic.classList.remove('hidden');
+      q.value = "";
+      q.focus();
+      return;
+    }
+
+    // As soon as we start typing, remove "Thinking..."
+    setBusy(true, "");         // keep disabled while typing, but NO "Thinking..."
+    aiBubble.textContent = ""; // remove "Thinking..." inside the bubble too
+
+    // Type a clean version (no asterisks)
+    const plain = mdToPlainForTyping(answer);
+    await typewriter(aiBubble, plain, 5);
+
+    // After typing, render markdown formatting (lists/bold/italics)
+    aiBubble.innerHTML = mdToHtml(answer);
+
+    // show controls
+    newTopic.classList.remove('hidden');
+    setBusy(false, "");
+
+    // focus follow-up
+    q.value = "";
+    q.focus();
+
+  }catch(err){
+    setBusy(false, "");
+    aiBubble.textContent = "Error: " + (err && err.message ? err.message : "Request failed");
+  }
+}
+
+// Enter to send, Shift+Enter newline
+function wireEnter(textarea, sendFn){
+  textarea.addEventListener('keydown', (e) => {
+    if(e.key === 'Enter' && !e.shiftKey){
+      e.preventDefault();
+      sendFn();
+    }
+  });
+}
+
+// Home send
+send0.addEventListener('click', () => ask(q0.value));
+wireEnter(q0, () => ask(q0.value));
+
+// Follow-up send
+send.addEventListener('click', () => ask(q.value));
+wireEnter(q, () => ask(q.value));
+
+// New Topic: reset to home
+newTopic.addEventListener('click', () => {
+  window.location.href = '/v2/app.html';
+});

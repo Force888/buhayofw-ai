@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>BuhayOFW AI</title>
+  <style>
+    body { font-family: system-ui, Arial; margin: 0; background:#0b0f14; color:#e8eef6; }
+    .wrap { max-width: 860px; margin: 0 auto; padding: 20px; }
+    .card { background:#111823; border:1px solid #1d2a3a; border-radius:16px; padding:18px; }
+    textarea { width:100%; min-height:110px; border-radius:12px; border:1px solid #243447;
+      background:#0b1220; color:#e8eef6; padding:12px; font-size:15px; }
+    button { border:0; border-radius:12px; padding:10px 14px; font-weight:600; cursor:pointer; }
+    .row { display:flex; gap:10px; margin-top:10px; align-items:center; }
+
+    .btn { background:#3b82f6; color:white; }
+
+    .out { white-space:pre-wrap; margin-top:14px; padding:12px; border-radius:12px;
+      background:#0b1220; border:1px solid #243447; min-height:60px; }
+
+    .muted { color:#9fb2c7; font-size:13px; margin-top:8px; }
+
+	.btn:disabled {
+
+  background: #475569;
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+html, body { height: 100%; }
+body { overflow-y: auto; }
+#chat, .chat { overflow-y: auto; max-height: none; }
+
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1 style="margin:0 0 12px 0;">BuhayOFW AI</h1>
+    <div class="card">
+      <label for="q" class="muted">Ask a question (Tagalog or English):</label>
+      <textarea id="q" placeholder="Halimbawa: Ano ang dapat gawin kapag masakit ang binti habang naglalakad?"></textarea>
+      <div class="row">
+        <button id="send" class="btn">Send</button>
+        <span id="status" class="muted"></span>
+      </div>
+      <div id="out" class="out"></div>
+	<div class="row" style="margin-top:10px;">
+  <button id="follow" class="btn" type="button" disabled>Follow-up</button>
+  <button id="newq" class="btn" type="button" disabled>New question</button>
+</div>
+
+      <div class="muted">Next step: connect this UI to <code>/ask</code>.</div>
+    </div>
+  </div>
+
+<script>
+  // ===== Elements (adjust ids if your HTML differs) =====
+  const q = document.getElementById('q');
+  const sendBtn = document.getElementById('send');
+  const statusEl = document.getElementById('status');
+
+  // These should exist in the 14:00 UI file
+  const followBtn = document.getElementById('follow');
+  const newqBtn = document.getElementById('newq');
+
+  // Common containers (try these ids/classes; match to your HTML)
+  const chat = document.getElementById('chat') || document.querySelector('.chat') || document.body;
+  const composer = document.getElementById('composer') || document.querySelector('.composer') || q?.closest('div');
+
+  let isBusy = false;
+
+  function setStatus(msg){
+    if (!statusEl) return;
+    statusEl.textContent = msg || '';
+  }
+
+  function setButtonsEnabled(enabled){
+    if (sendBtn) sendBtn.disabled = !enabled;
+    if (followBtn) followBtn.disabled = !enabled;
+    if (newqBtn) newqBtn.disabled = !enabled;
+  }
+
+  function scrollToBottom(){
+    // Fix “can’t scroll to bottom” issues
+    // If chat is scrollable, scroll it; else scroll window
+    if (chat && chat.scrollHeight && (chat === document.body || chat === document.documentElement)) {
+      window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+    } else if (chat && chat.scrollHeight) {
+      chat.scrollTop = chat.scrollHeight;
+    } else {
+      window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+    }
+  }
+
+  // ===== Markdown (lightweight) =====
+  // Supports: **bold**, *italic*, `code`, newlines, bullet lines starting with "-" or "*"
+  function escapeHtml(s){
+    return (s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  function renderMarkdown(md){
+    const text = (md ?? '').toString();
+    const lines = text.split('\n');
+
+    // Build HTML with simple list support
+    let html = '';
+    let inList = false;
+
+    const inline = (s) => {
+      let out = escapeHtml(s);
+      out = out.replace(/`([^`]+)`/g, '<code>$1</code>');
+      out = out.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+      out = out.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+      return out;
+    };
+
+    for (const raw of lines){
+      const line = raw.trimEnd();
+
+      const isBullet = /^\s*[-*]\s+/.test(line);
+      if (isBullet){
+        if (!inList){ html += '<ul>'; inList = true; }
+        html += `<li>${inline(line.replace(/^\s*[-*]\s+/, ''))}</li>`;
+        continue;
+      }
+
+      if (inList){
+        html += '</ul>';
+        inList = false;
+      }
+
+      if (line.trim() === ''){
+        html += '<div style="height:8px"></div>';
+      } else {
+        html += `<div>${inline(line)}</div>`;
+      }
+    }
+
+    if (inList) html += '</ul>';
+    return html;
+  }
+
+  // ===== Chat bubbles =====
+  function addBubble(role, content, opts = {}){
+    // role: 'user' | 'ai'
+    // opts.html: if true, treat content as HTML
+    const wrap = document.createElement('div');
+    wrap.className = 'bubble-row ' + (role === 'user' ? 'user' : 'ai');
+
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble ' + (role === 'user' ? 'bubble-user' : 'bubble-ai');
+
+    if (opts.html){
+      bubble.innerHTML = content;
+    } else {
+      bubble.textContent = content;
+    }
+
+    wrap.appendChild(bubble);
+    if (chat && chat.appendChild) chat.appendChild(wrap);
+
+    scrollToBottom();
+    return bubble;
+  }
+
+  // ===== Typewriter =====
+  async function typeIntoBubble(bubbleEl, finalText){
+    const raw = (finalText ?? '').toString();
+
+    // We type the RAW text (so you see it typing), then at the end we convert to markdown HTML
+    bubbleEl.textContent = '';
+    const speed = 8; // ms per char (tweak if you want)
+    for (let i = 0; i < raw.length; i++){
+      bubbleEl.textContent += raw[i];
+      if (i % 5 === 0) scrollToBottom();
+      await new Promise(r => setTimeout(r, speed));
+    }
+
+    // At end, render markdown properly so **bold** becomes bold, bullets become bullets
+    bubbleEl.innerHTML = renderMarkdown(raw);
+    scrollToBottom();
+  }
+
+  // ===== Main ask() =====
+  async function ask(){
+    if (isBusy) return;
+
+    const text = (q?.value ?? '').trim();
+    if (!text) return;
+
+    isBusy = true;
+    setButtonsEnabled(false);
+
+    // 1) Show user bubble
+    addBubble('user', text);
+
+    // 2) Collapse/hide composer while thinking (as you requested)
+    if (composer) composer.style.display = 'none';
+
+    // 3) “Thinking…” placeholder bubble
+    setStatus('Thinking...');
+    const aiBubble = addBubble('ai', 'Thinking...');
+
+    try {
+      const r = await fetch('/ask', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question: text })
+      });
+
+      const contentType = (r.headers.get('content-type') || '').toLowerCase();
+
+      let data;
+      if (contentType.includes('application/json')){
+        data = await r.json();
+      } else {
+        const raw = await r.text();
+        throw new Error(raw || ('HTTP ' + r.status));
+      }
+
+      const answer = (data && (data.answer || data.text)) ? (data.answer || data.text) : JSON.stringify(data, null, 2);
+
+      setStatus('');
+      // replace placeholder typing behavior
+      await typeIntoBubble(aiBubble, answer);
+
+      // enable follow-up/new question after answer completes
+      if (followBtn) followBtn.disabled = false;
+      if (newqBtn) newqBtn.disabled = false;
+
+    } catch (e){
+      setStatus('');
+      aiBubble.textContent = 'Error: ' + (e && e.message ? e.message : e);
+      if (composer) composer.style.display = '';
+      setButtonsEnabled(true);
+      isBusy = false;
+      return;
+    }
+
+    // Keep composer hidden until user chooses follow-up/new question
+    // (matches your “question fixed, composer disappears” flow)
+    isBusy = false;
+  }
+
+  // Follow-up: bring composer back but keep chat history
+  function followUp(){
+    if (composer) composer.style.display = '';
+    if (q) {
+      q.value = '';
+      q.focus();
+    }
+    if (sendBtn) sendBtn.disabled = false;
+    if (followBtn) followBtn.disabled = true;
+    if (newqBtn) newqBtn.disabled = true;
+  }
+
+  // New question: same as follow-up (you can later change to clear chat if you want)
+  function newQuestion(){
+    if (composer) composer.style.display = '';
+    if (q) {
+      q.value = '';
+      q.focus();
+    }
+    if (sendBtn) sendBtn.disabled = false;
+    if (followBtn) followBtn.disabled = true;
+    if (newqBtn) newqBtn.disabled = true;
+  }
+
+  // Wire events
+  if (sendBtn) sendBtn.addEventListener('click', ask);
+  if (q) q.addEventListener('keydown', (e) => {
+    if (e.ctrlKey && e.key === 'Enter') ask();
+  });
+  if (followBtn) followBtn.addEventListener('click', followUp);
+  if (newqBtn) newqBtn.addEventListener('click', newQuestion);
+
+  // Start state
+  setStatus('');
+  if (followBtn) followBtn.disabled = true;
+  if (newqBtn) newqBtn.disabled = true;
+  if (q) q.focus();
+</script>
+
+</body>
+</html>

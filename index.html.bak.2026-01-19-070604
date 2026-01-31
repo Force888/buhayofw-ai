@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>BuhayOFW AI</title>
+  <link rel="stylesheet" href="/ui.css" />
+</head>
+
+<body>
+  <div class="page">
+    <div class="wrap">
+      <header class="hero">
+        <h1>BuhayOFW AI</h1>
+        <div class="sub">
+          <div><b>Tagalog-first</b> AI assistant • simple, clear, and helpful</div>
+          <div>Pwede Tagalog o English.</div>
+          <div>Health • Legal • Self-help</div>
+          <div><b>Not a doctor/lawyer</b> — for guidance only.</div>
+        </div>
+      </header>
+
+      <main class="card">
+        <label class="label" for="q">Ask a question (Tagalog or English):</label>
+
+        <textarea
+          id="q"
+          class="textbox"
+          rows="5"
+          placeholder="Halimbawa: Ano ang dapat gawin kapag masakit ang binti habang naglalakad?"
+        ></textarea>
+
+        <div class="row">
+          <button id="send" class="btn" type="button">Send</button>
+          <div id="status" class="status"></div>
+        </div>
+
+        <div id="chat" class="chat"></div>
+
+        <div class="tip">
+          Tip: Press Ctrl+Enter to send. Results may be imperfect—double-check important info.
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <script>
+    const q = document.getElementById('q');
+    const sendBtn = document.getElementById('send');
+    const statusEl = document.getElementById('status');
+    const chat = document.getElementById('chat');
+
+    function setStatus(t) { statusEl.textContent = t || ''; }
+
+    function escapeHtml(s) {
+      return (s || '').replace(/[&<>"']/g, c => ({
+        '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+      }[c]));
+    }
+
+    function addBubble(role, text) {
+      const div = document.createElement('div');
+      div.className = 'bubble ' + (role === 'user' ? 'user' : 'ai');
+      div.innerHTML = escapeHtml(text).replace(/\n/g, '<br>');
+      chat.appendChild(div);
+      div.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    }
+
+    async function ask() {
+      const text = (q.value || '').trim();
+      if (!text) return;
+
+      // show user's question at top/bottom as a bubble
+      addBubble('user', text);
+
+      // clear input immediately (so it feels responsive)
+      q.value = '';
+      q.focus();
+
+      setStatus('Thinking…');
+      sendBtn.disabled = true;
+
+      try {
+        const r = await fetch('/ask', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ question: text })
+        });
+
+        // In case server returns non-JSON errors
+        const contentType = r.headers.get('content-type') || '';
+        let data = null;
+
+        if (contentType.includes('application/json')) {
+          data = await r.json();
+        } else {
+          const raw = await r.text();
+          data = { error: raw || ('HTTP ' + r.status) };
+        }
+
+        const answer =
+          (data && (data.answer || data.text)) ? (data.answer || data.text)
+          : (data && data.error) ? ('Error: ' + data.error)
+          : JSON.stringify(data, null, 2);
+
+        addBubble('ai', answer);
+      } catch (e) {
+        addBubble('ai', 'Error: ' + (e && e.message ? e.message : e));
+      } finally {
+        setStatus('');
+        sendBtn.disabled = false;
+        q.focus();
+      }
+    }
+
+    sendBtn.addEventListener('click', ask);
+    q.addEventListener('keydown', (e) => {
+      if (e.ctrlKey && e.key === 'Enter') ask();
+    });
+  </script>
+</body>
+</html>

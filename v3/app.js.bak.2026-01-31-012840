@@ -1,0 +1,301 @@
+(() => {
+  // =========================
+  // State
+  // =========================
+  let threadMemory = [];
+  const MAX_MEMORY_MESSAGES = 8; // 4 turns
+
+  // =========================
+  // Elements (IDs must match index.html)
+  // =========================
+  const menuBtn = document.getElementById('menuBtn');
+  const menuDropdown = document.getElementById('menuDropdown');
+
+  const homeView = document.getElementById('homeView');
+  const threadView = document.getElementById('threadView');
+  const messagesEl = document.getElementById('messages');
+
+  const composerForm = document.getElementById('composerForm');
+  const composerInput = document.getElementById('composerInput');
+  const newTopicBtn = document.getElementById('newTopicBtn');
+
+  const jumpBtn = document.getElementById('jumpBtn');
+
+  // =========================
+  // Menu
+  // =========================
+  function closeMenu() {
+    menuDropdown.classList.add('hidden');
+  }
+
+  menuBtn?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    menuDropdown.classList.toggle('hidden');
+  });
+
+  document.addEventListener('click', closeMenu);
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeMenu();
+  });
+
+  // =========================
+  // View helpers
+  // =========================
+  function showThread() {
+    homeView.classList.add('hidden');
+    threadView.classList.remove('hidden');
+
+    document.body.classList.remove('home-mode');
+    document.body.classList.add('thread-mode');
+
+    newTopicBtn.classList.remove('hidden');
+  }
+
+  function showHome() {
+    homeView.classList.remove('hidden');
+    threadView.classList.add('hidden');
+
+    document.body.classList.add('home-mode');
+    document.body.classList.remove('thread-mode');
+
+    newTopicBtn.classList.add('hidden');
+    if (jumpBtn) jumpBtn.classList.add('hidden');
+  }
+
+  // =========================
+  // Scroll behavior (ChatGPT-like)
+  // =========================
+  function getScrollParent() {
+    // In our CSS we use window scroll (not #messages scroll)
+    return window;
+  }
+
+  function getScrollMetrics() {
+    // documentElement is more reliable than body
+    const doc = document.documentElement;
+    const scrollTop = doc.scrollTop || document.body.scrollTop || 0;
+    const scrollHeight = doc.scrollHeight || document.body.scrollHeight || 0;
+    const clientHeight = doc.clientHeight || window.innerHeight || 0;
+    return { scrollTop, scrollHeight, clientHeight };
+  }
+
+  function isNearBottom(thresholdPx = 120) {
+    const { scrollTop, scrollHeight, clientHeight } = getScrollMetrics();
+    return (scrollHeight - (scrollTop + clientHeight)) <= thresholdPx;
+  }
+
+  function updateJumpBtn() {
+    if (!jumpBtn) return;
+    // Show button only in thread mode and only if user is NOT near bottom
+    if (document.body.classList.contains('thread-mode') && !isNearBottom(180)) {
+      jumpBtn.classList.remove('hidden');
+    } else {
+      jumpBtn.classList.add('hidden');
+    }
+  }
+
+  function scrollToBottom({ smooth = true } = {}) {
+    const last = messagesEl.lastElementChild;
+    if (!last) return;
+
+    // We scroll by bringing the last message into view
+    last.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto', block: 'end' });
+  }
+
+  // Keep jump button accurate on scroll/resize
+  window.addEventListener('scroll', updateJumpBtn, { passive: true });
+  window.addEventListener('resize', updateJumpBtn);
+
+  // Click jump button
+  jumpBtn?.addEventListener('click', () => {
+    scrollToBottom({ smooth: true });
+    updateJumpBtn();
+  });
+
+  // =========================
+  // Message helpers
+  // =========================
+  function addUserBubble(text) {
+    const wrap = document.createElement('div');
+    wrap.className = 'msg msg-user';
+    wrap.textContent = text;
+    messagesEl.appendChild(wrap);
+
+    // If user is near bottom, keep them at bottom
+    if (isNearBottom()) scrollToBottom({ smooth: true });
+    updateJumpBtn();
+  }
+
+  function addAssistantBlock(text) {
+    const wrap = document.createElement('div');
+    wrap.className = 'msg msg-ai';
+    wrap.textContent = text;
+    messagesEl.appendChild(wrap);
+
+    if (isNearBottom()) scrollToBottom({ smooth: true });
+    updateJumpBtn();
+    return wrap;
+  }
+
+  // =========================
+  // Input behavior
+  // =========================
+  composerInput?.addEventListener('keydown', (e) => {
+    // Enter sends, Shift+Enter newline
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      composerForm.requestSubmit();
+    }
+  });
+
+  function setComposerThinking(isThinking) {
+    const composerBar = document.getElementById('composerBar');
+    const input = composerInput;
+    const sendBtn = document.getElementById('sendBtn');
+
+    if (isThinking) {
+      composerBar?.classList.add('thinking');
+      input.disabled = true;
+      if (sendBtn) sendBtn.disabled = true;
+      input.placeholder = 'Nag-iisip…';
+    } else {
+      composerBar?.classList.remove('thinking');
+      input.disabled = false;
+      if (sendBtn) sendBtn.disabled = false;
+
+      const isFollowUp = threadMemory.length > 0;
+      input.placeholder = isFollowUp ? 'Kasunod na tanong…' : 'Itanong mo dito…';
+      input.focus();
+    }
+  }
+
+  // =========================
+  // "Markdown-lite"
+  // =========================
+  function escapeHTML(str) {
+    return str
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#039;');
+  }
+
+  function renderMarkdownLite(md) {
+    const escaped = escapeHTML(md);
+
+    let html = escaped.replace(/`([^`]+)`/g, '<code>$1</code>');
+    html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+    html = html.replace(/\n/g, '<br>');
+
+    return html;
+  }
+
+  // =========================
+  // Typing with smart autoscroll
+  // =========================
+  async function typeText(el, text, msPerChar = 10) {
+    el.textContent = '';
+
+    // Capture whether user was near bottom at the start of typing
+    // If they were, we will auto-follow; if not, we won't.
+    let follow = isNearBottom(180);
+
+    for (let i = 0; i < text.length; i++) {
+      el.textContent += text[i];
+
+      // If user scrolls up during typing, stop following
+      if (follow && !isNearBottom(240)) {
+        follow = false;
+      }
+
+      if (follow) {
+        scrollToBottom({ smooth: false });
+      } else {
+        updateJumpBtn();
+      }
+
+      // throttle a bit
+      await new Promise(r => setTimeout(r, msPerChar));
+    }
+
+    updateJumpBtn();
+  }
+
+  // =========================
+  // Thread memory helpers
+  // =========================
+  function pushMemory(role, content) {
+    threadMemory.push({ role, content });
+    threadMemory = threadMemory.slice(-MAX_MEMORY_MESSAGES);
+  }
+
+  // =========================
+  // Submit handler
+  // =========================
+  composerForm?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const q = composerInput.value.trim();
+    if (!q) return;
+
+    showThread();
+
+    addUserBubble(q);
+    pushMemory('user', q);
+
+    composerInput.value = '';
+    setComposerThinking(true);
+
+    const thinkingEl = addAssistantBlock('Nag-iisip…');
+
+    try {
+      const res = await fetch('/ask', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question: q, history: threadMemory })
+      });
+
+      if (!res.ok) {
+        thinkingEl.textContent = `May error (${res.status}). Pakisubukan ulit.`;
+        updateJumpBtn();
+        return;
+      }
+
+      const data = await res.json();
+      const answer = (data && data.answer) ? data.answer : 'Pasensya, walang sagot na bumalik.';
+
+      // Type it out (plain)
+      await typeText(thinkingEl, answer, 10);
+
+      // Swap to rendered version (bold/italics/code/newlines)
+      thinkingEl.innerHTML = renderMarkdownLite(answer);
+
+      // Save assistant reply ONCE (fixed your duplicate push)
+      pushMemory('assistant', answer);
+
+      // If user stayed near bottom, ensure final snap to bottom
+      if (isNearBottom(220)) scrollToBottom({ smooth: false });
+      updateJumpBtn();
+    } catch (err) {
+      thinkingEl.textContent = 'May problem sa koneksyon. Pakisubukan ulit.';
+      updateJumpBtn();
+    } finally {
+      setComposerThinking(false);
+    }
+  });
+
+  // =========================
+  // New topic resets
+  // =========================
+  newTopicBtn?.addEventListener('click', () => {
+    messagesEl.innerHTML = '';
+    composerInput.value = '';
+    threadMemory = [];
+    showHome();
+    setComposerThinking(false);
+  });
+
+  // Start in home
+  showHome();
+})();

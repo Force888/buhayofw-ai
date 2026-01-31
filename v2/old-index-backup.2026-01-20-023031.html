@@ -1,0 +1,401 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>BuhayOFW AI</title>
+  <style>
+    .hidden { display: none !important; }
+    body { font-family: system-ui, Arial; margin: 0; background:#0b0f14; color:#e8eef6; }
+    .wrap { max-width: 860px; margin: 0 auto; padding: 20px; }
+    .card { background:#111823; border:1px solid #1d2a3a; border-radius:16px; padding:18px; }
+    textarea { width:100%; min-height:110px; border-radius:12px; border:1px solid #243447;
+      background:#0b1220; color:#e8eef6; padding:12px; font-size:15px; }
+    button { border:0; border-radius:12px; padding:10px 14px; font-weight:600; cursor:pointer; }
+    .row { display:flex; gap:10px; margin-top:10px; align-items:center; }
+    .btn { background:#3b82f6; color:white; }
+    .btn:disabled { opacity:0.6; cursor:not-allowed; }
+    .out { white-space:pre-wrap; margin-top:14px; padding:12px; border-radius:12px;
+      background:#0b1220; border:1px solid #243447; min-height:60px; }
+    .muted { color:#9fb2c7; font-size:13px; margin-top:8px; }
+	.btn:disabled {
+  background: #475569;
+  opacity: 0.8;
+  cursor: not-allowed;
+}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1 style="margin:0 0 12px 0;">BuhayOFW AI</h1>
+    <div class="card">
+
+<!-- Composer (shown only at start + when New question) -->
+<div id="composer">
+  <label for="q" class="muted">Ask a question (Tagalog or English):</label>
+  <textarea id="q" placeholder="Halimbawa: Ano ang dapat gawin kapag masakit ang binti habang naglalakad?"></textarea>
+
+  <div class="row">
+    <button id="send" class="btn">Send</button>
+    <span id="status" class="muted"></span>
+  </div>
+</div>
+
+<!-- Fixed question (shown after Send) -->
+<div id="fixed" class="hidden" style="margin-top:10px;">
+  <div class="muted" style="margin-bottom:6px;">Your question:</div>
+  <div id="qfixed" class="out" style="min-height:auto;"></div>
+</div>
+
+<!-- Answer area -->
+<div id="out" class="out"></div>
+
+<!-- Post-answer actions (hidden until answer finishes) -->
+<div id="actions" class="row hidden" style="margin-top:10px;">
+  <button id="follow" class="btn" type="button">Follow-up</button>
+  <button id="newq" class="btn" type="button">New question</button>
+</div>
+
+<!-- Recent questions (simple history) -->
+<div id="historyWrap" class="hidden" style="margin-top:12px;">
+  <div class="muted" style="margin-bottom:6px;">Recent questions</div>
+  <div id="history" class="out" style="min-height:auto;"></div>
+</div>
+
+<!-- Tip (keep hidden on clean start page) -->
+<div class="tip hidden muted">Next step: connect this UI to <code>/ask</code>.</div>
+
+    <div class="tip hidden">Next step: connect this UI to <code>/ask</code>.</div>
+    </div>
+  </div>
+
+<script>
+  // --- Elements ---
+  const q = document.getElementById('q');
+  const out = document.getElementById('out');
+  const btn = document.getElementById('send');
+  const status = document.getElementById('status');
+
+  const composer = document.getElementById('composer');
+  const fixedWrap = document.getElementById('fixed');
+  const qfixed = document.getElementById('qfixed');
+
+  const actions = document.getElementById('actions');
+  const followBtn = document.getElementById('follow');
+  const newBtn = document.getElementById('newq');
+
+  const tip = document.querySelector('.tip');
+
+  // --- State ---
+  let isBusy = false;
+  let lastQuestion = '';
+  let lastAnswer = '';
+
+  // --- History (Recent questions) ---
+  const HISTORY_KEY = 'boai_recent_v1';
+
+  function loadHistory() {
+    try {
+      const raw = localStorage.getItem(HISTORY_KEY);
+      const arr = raw ? JSON.parse(raw) : [];
+      return Array.isArray(arr) ? arr : [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function saveHistory(items) {
+    try {
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(items.slice(0, 8)));
+    } catch (e) {}
+  }
+
+  function pushHistory(question, answer) {
+    const items = loadHistory();
+    const item = { q: question, a: answer, t: Date.now() };
+    // de-dupe by question
+    const filtered = items.filter(x => x && x.q !== question);
+    filtered.unshift(item);
+    saveHistory(filtered);
+    renderHistory();
+  }
+
+  function ensureHistoryUI() {
+    // Create a history card above the main card (only once)
+    if (document.getElementById('historyCard')) return;
+
+    const wrap = document.querySelector('.wrap');
+    const mainCard = wrap.querySelector('.card');
+
+    const card = document.createElement('div');
+    card.id = 'historyCard';
+    card.className = 'card';
+    card.style.marginBottom = '12px';
+    card.innerHTML = `
+      <div class="muted" style="margin-bottom:8px;">Recent questions</div>
+      <div id="historyList" class="out" style="min-height:auto;"></div>
+    `;
+
+    wrap.insertBefore(card, mainCard);
+  }
+
+  function renderHistory() {
+    ensureHistoryUI();
+    const list = document.getElementById('historyList');
+    const items = loadHistory();
+
+    if (!items.length) {
+      list.innerHTML = `<div class="muted">No recent questions yet.</div>`;
+      return;
+    }
+
+    list.innerHTML = items.map((it, idx) => {
+      const safeQ = escapeHtml(it.q);
+      const when = new Date(it.t).toLocaleString();
+      return `
+        <div style="padding:10px; border:1px solid #243447; border-radius:12px; margin-bottom:8px; cursor:pointer;"
+             data-idx="${idx}">
+          <div style="font-weight:600;">${safeQ}</div>
+          <div class="muted" style="margin-top:6px;">${when}</div>
+        </div>
+      `;
+    }).join('');
+
+    // Click to reload question into the box
+    Array.from(list.querySelectorAll('[data-idx]')).forEach(el => {
+      el.addEventListener('click', () => {
+        const idx = Number(el.getAttribute('data-idx'));
+        const items2 = loadHistory();
+        const picked = items2[idx];
+        if (!picked) return;
+
+        resetToStart();
+        q.value = picked.q;
+        q.focus();
+      });
+    });
+  }
+
+  function escapeHtml(s) {
+    return String(s)
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#039;');
+  }
+
+  // --- UI helpers ---
+  function setBusy(on) {
+    isBusy = on;
+    btn.disabled = on;
+    btn.textContent = on ? 'Thinking…' : 'Send';
+
+    // Only show these AFTER answer finishes
+    actions.classList.toggle('hidden', true);
+
+    // Tip can remain hidden always, but keep this if you want later
+    if (tip) tip.classList.toggle('hidden', true);
+  }
+
+  function resetToStart() {
+    lastQuestion = '';
+    lastAnswer = '';
+
+    // Show composer, hide fixed question
+    composer.classList.remove('hidden');
+    fixedWrap.classList.add('hidden');
+
+    // Clear answer
+    out.innerHTML = '';
+
+    // Hide actions until an answer completes
+    actions.classList.add('hidden');
+
+    // Reset status
+    status.textContent = '';
+
+    // Clear input
+    q.value = '';
+    q.focus();
+  }
+
+  function showFixedQuestion(text) {
+    qfixed.textContent = text;
+    fixedWrap.classList.remove('hidden');
+  }
+
+  function hideComposer() {
+    composer.classList.add('hidden');
+  }
+
+  function showComposer() {
+    composer.classList.remove('hidden');
+  }
+
+  // --- Formatting during typing ---
+  // While typing: keep it in a PRE so bullets/numbering/newlines look correct immediately.
+  function setLiveText(text) {
+    let pre = out.querySelector('#live');
+    if (!pre) {
+      out.innerHTML = `<pre id="live" style="margin:0; white-space:pre-wrap; font-family:inherit;"></pre>`;
+      pre = out.querySelector('#live');
+    }
+    pre.textContent = text;
+  }
+
+  // After typing: convert simple list lines to real <ul>/<ol> (so it looks nicer)
+  function finalizeRender(text) {
+    const lines = String(text).replace(/\r\n/g, '\n').split('\n');
+
+    // Build blocks
+    let html = '';
+    let inUL = false;
+    let inOL = false;
+
+    function closeLists() {
+      if (inUL) { html += '</ul>'; inUL = false; }
+      if (inOL) { html += '</ol>'; inOL = false; }
+    }
+
+    for (const raw of lines) {
+      const line = raw.trimEnd();
+      const t = line.trim();
+
+      const ulMatch = /^[-•]\s+(.+)$/.exec(t);
+      const olMatch = /^(\d+)[\.\)]\s+(.+)$/.exec(t);
+
+      if (ulMatch) {
+        if (inOL) { html += '</ol>'; inOL = false; }
+        if (!inUL) { html += '<ul style="margin:10px 0 10px 22px;">'; inUL = true; }
+        html += `<li style="margin:6px 0;">${escapeHtml(ulMatch[1])}</li>`;
+        continue;
+      }
+
+      if (olMatch) {
+        if (inUL) { html += '</ul>'; inUL = false; }
+        if (!inOL) { html += '<ol style="margin:10px 0 10px 22px;">'; inOL = true; }
+        html += `<li style="margin:6px 0;">${escapeHtml(olMatch[2])}</li>`;
+        continue;
+      }
+
+      // Normal paragraph or blank line
+      closeLists();
+      if (t === '') {
+        html += '<div style="height:10px;"></div>';
+      } else {
+        html += `<div>${escapeHtml(line)}</div>`;
+      }
+    }
+
+    closeLists();
+    out.innerHTML = html || '';
+  }
+
+  async function typeAnswer(text) {
+    const full = String(text || '');
+    let i = 0;
+
+    // Start live
+    setLiveText('');
+
+    // Type fast (chunked) so it doesn’t take forever
+    const chunk = 3;
+    while (i < full.length) {
+      i += chunk;
+      setLiveText(full.slice(0, i));
+      await new Promise(r => requestAnimationFrame(r));
+    }
+
+    // Final render into lists/paragraphs
+    finalizeRender(full);
+  }
+
+  // --- Main ask flow ---
+  async function ask(question) {
+    setBusy(true);
+    status.textContent = 'Thinking…';
+
+    try {
+      const resp = await fetch('/ask', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ q: question })
+      });
+
+      let data;
+      const ct = resp.headers.get('content-type') || '';
+      if (ct.includes('application/json')) data = await resp.json();
+      else data = await resp.text();
+
+      const answer =
+        (data && typeof data === 'object' && (data.answer || data.output || data.text)) ?
+          (data.answer || data.output || data.text) :
+          (typeof data === 'string' ? data : JSON.stringify(data));
+
+      lastAnswer = answer;
+
+      status.textContent = '';
+      await typeAnswer(answer);
+
+      // Show post-answer actions
+      actions.classList.remove('hidden');
+
+      // Save to history
+      pushHistory(lastQuestion, lastAnswer);
+    } catch (e) {
+      status.textContent = '';
+      out.textContent = 'Error: could not reach /ask. Please try again.';
+      actions.classList.remove('hidden');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // --- Event handlers ---
+  btn.addEventListener('click', async () => {
+    if (isBusy) return;
+
+    const text = (q.value || '').trim();
+    if (!text) return;
+
+    // Lock in question at top
+    lastQuestion = text;
+
+    // Hide composer and show fixed question
+    hideComposer();
+    showFixedQuestion(text);
+
+    // Clear any previous answer and actions
+    out.innerHTML = '';
+    actions.classList.add('hidden');
+
+    // Ask backend
+    await ask(text);
+  });
+
+  followBtn.addEventListener('click', () => {
+    // Show the composer below the answer for follow-up
+    showComposer();
+
+    // Put cursor at end, and add a follow-up prompt if user hasn’t typed anything
+    if (!q.value.trim()) q.value = lastQuestion + '\n\nFollow-up: ';
+    q.focus();
+    q.setSelectionRange(q.value.length, q.value.length);
+
+    // Keep fixed question visible
+    fixedWrap.classList.remove('hidden');
+  });
+
+  newBtn.addEventListener('click', () => {
+    resetToStart();
+  });
+
+  // --- Initial load ---
+  renderHistory();
+  resetToStart();
+</script>
+
+
+</body>
+</html>
