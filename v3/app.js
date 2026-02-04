@@ -1,274 +1,404 @@
 (() => {
-  // --- Memory (last 4 turns = 8 messages) ---
+  "use strict";
+
+  const homeView = document.getElementById("homeView");
+  const threadView = document.getElementById("threadView");
+  const messagesEl = document.getElementById("messages");
+
+  const composerBar = document.getElementById("composerBar");
+  const composerForm = document.getElementById("composerForm");
+  const composerInput = document.getElementById("composerInput");
+  const sendBtn = document.getElementById("sendBtn");
+  const newTopicBtn = document.getElementById("newTopicBtn");
+
+  const menuBtn = document.getElementById("menuBtn");
+  const menuDropdown = document.getElementById("menuDropdown");
+
+  if (!homeView || !threadView || !messagesEl || !composerBar || !composerForm || !composerInput || !sendBtn) {
+    console.error("Missing required DOM elements. Check index.html IDs.");
+    return;
+  }
+
   let threadMemory = [];
-  const MAX_MEMORY_MESSAGES = 8;
 
-  // --- Elements (IDs must match index.html) ---
-  const menuBtn = document.getElementById('menuBtn');
-  const menuDropdown = document.getElementById('menuDropdown');
+  const setMode = (mode) => {
+    document.body.classList.remove("home-mode", "thread-mode");
+    document.body.classList.add(mode === "home" ? "home-mode" : "thread-mode");
+  };
 
-  const homeView = document.getElementById('homeView');
-  const threadView = document.getElementById('threadView');
-  const messagesEl = document.getElementById('messages');
+  const showHome = () => {
+    homeView.classList.remove("hidden");
+    threadView.classList.add("hidden");
+    if (newTopicBtn) newTopicBtn.classList.add("hidden");
+    setMode("home");
+    syncComposerReserve();
+  };
 
-  const composerForm = document.getElementById('composerForm');
-  const composerInput = document.getElementById('composerInput');
-  const newTopicBtn = document.getElementById('newTopicBtn');
+  const showThread = () => {
+    homeView.classList.add("hidden");
+    threadView.classList.remove("hidden");
+    if (newTopicBtn) newTopicBtn.classList.remove("hidden");
+    setMode("thread");
+    syncComposerReserve();
+    scrollToBottom(true);
+  };
 
-  // Ensure body starts in home-mode
-  document.body.classList.add('home-mode');
-  document.body.classList.remove('thread-mode');
+  const scrollToBottom = (force = false) => {
+    const el = messagesEl;
+    const nearBottom = (el.scrollHeight - el.scrollTop - el.clientHeight) < 140;
+    if (force || nearBottom) el.scrollTop = el.scrollHeight;
+  };
 
-  // --- Menu ---
-  function closeMenu() {
-    menuDropdown.classList.add('hidden');
-  }
-  menuBtn?.addEventListener('click', (e) => {
-    e.stopPropagation();
-    menuDropdown.classList.toggle('hidden');
-  });
-  document.addEventListener('click', closeMenu);
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') closeMenu();
-  });
+  const setComposerThinking = (isThinking) => {
+    composerBar.classList.toggle("thinking", !!isThinking);
+    composerInput.disabled = !!isThinking;
+    sendBtn.disabled = !!isThinking;
+    if (newTopicBtn) newTopicBtn.disabled = !!isThinking;
+  };
 
-  // --- Jump to bottom button (ChatGPT-style) ---
-  let jumpBtn = document.getElementById('jumpBtn');
-  if (!jumpBtn) {
-    jumpBtn = document.createElement('button');
-    jumpBtn.id = 'jumpBtn';
-    jumpBtn.className = 'jump-btn hidden';
-    jumpBtn.type = 'button';
-    jumpBtn.innerHTML = '↓';
-    document.body.appendChild(jumpBtn);
-  }
+  const autoGrow = () => {
+    composerInput.style.height = "auto";
+    const max = 160;
+    const next = Math.min(composerInput.scrollHeight, max);
+    composerInput.style.height = `${next}px`;
+    syncComposerReserve();
+  };
 
-  function showJumpBtn(show) {
-    jumpBtn.classList.toggle('hidden', !show);
-  }
+  const syncComposerReserve = () => {
+    const h = composerBar.getBoundingClientRect().height || 150;
+    document.documentElement.style.setProperty("--composer-reserve", `${Math.ceil(h) + 20}px`);
+  };
 
-  function isNearBottom(el, thresholdPx = 120) {
-    // distance from bottom
-    const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
-    return dist <= thresholdPx;
-  }
+  /* =========================
+     MINI MARKDOWN (safe)
+     - escape HTML first
+     - then add a tiny subset: **bold**, *italic*, `code`, lists
+     ========================= */
+  const escapeHtml = (s) =>
+    (s ?? "").toString()
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
 
-  function scrollToBottom({ smooth = true } = {}) {
-    messagesEl.scrollTo({
-      top: messagesEl.scrollHeight,
-      behavior: smooth ? 'smooth' : 'auto'
+  const inlineMd = (s) => {
+    let t = escapeHtml(s);
+
+    // inline code
+    t = t.replace(/`([^`]+)`/g, "<code>$1</code>");
+
+    // bold
+    t = t.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+
+    // italic (simple)
+    t = t.replace(/(^|[^*])\*([^*]+)\*(?!\*)/g, "$1<em>$2</em>");
+
+    return t;
+  };
+
+  const renderMarkdown = (raw) => {
+    const text = (raw ?? "").toString().replace(/\r\n/g, "\n");
+
+    const lines = text.split("\n");
+    let html = "";
+    let inOl = false;
+    let inUl = false;
+
+    const closeLists = () => {
+      if (inOl) { html += "</ol>"; inOl = false; }
+      if (inUl) { html += "</ul>"; inUl = false; }
+    };
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+
+      // blank line
+      if (!trimmed) {
+        closeLists();
+        html += "<br>";
+        continue;
+      }
+
+      // numbered list: "1. item"
+      const mOl = trimmed.match(/^(\d+)\.\s+(.*)$/);
+      if (mOl) {
+        if (inUl) { html += "</ul>"; inUl = false; }
+        if (!inOl) { html += "<ol>"; inOl = true; }
+        html += `<li>${inlineMd(mOl[2])}</li>`;
+        continue;
+      }
+
+      // bullet list: "- item" or "* item"
+      const mUl = trimmed.match(/^[-*]\s+(.*)$/);
+      if (mUl) {
+        if (inOl) { html += "</ol>"; inOl = false; }
+        if (!inUl) { html += "<ul>"; inUl = true; }
+        html += `<li>${inlineMd(mUl[1])}</li>`;
+        continue;
+      }
+
+      // normal paragraph line
+      closeLists();
+      html += `<div>${inlineMd(trimmed)}</div>`;
+    }
+
+    closeLists();
+    return html;
+  };
+
+  const finalizeAssistantMarkdown = (el) => {
+    if (!el) return;
+    const raw = el.textContent || "";
+    el.innerHTML = renderMarkdown(raw);
+  };
+
+  const addUserBlock = (text) => {
+    const div = document.createElement("div");
+    div.className = "msg msg-user";
+    div.textContent = text;
+    messagesEl.appendChild(div);
+    scrollToBottom(true);
+  };
+
+  const addAssistantBlock = (text = "") => {
+    const div = document.createElement("div");
+    div.className = "msg msg-ai";
+    div.textContent = text; // keep plain while typing/streaming
+    messagesEl.appendChild(div);
+    scrollToBottom(true);
+    return div;
+  };
+
+  const addThinkingRow = () => {
+    const row = document.createElement("div");
+    row.className = "thinking-row";
+
+    const avatar = document.createElement("span");
+    avatar.className = "thinking-avatar";
+
+    const img = document.createElement("img");
+    img.src = "./assets/ai-head.png";
+    img.alt = "AI";
+    img.onerror = () => { img.style.display = "none"; };
+    avatar.appendChild(img);
+
+    const txt = document.createElement("span");
+    txt.className = "thinking-text";
+    txt.textContent = "Nag-iisip...";
+
+    row.appendChild(avatar);
+    row.appendChild(txt);
+
+    messagesEl.appendChild(row);
+    scrollToBottom(true);
+    return row;
+  };
+
+  const fadeOutAndRemove = (el) => {
+    if (!el) return;
+    el.classList.add("fade-out");
+    setTimeout(() => {
+      if (el && el.parentNode) el.parentNode.removeChild(el);
+    }, 260);
+  };
+
+  // Menu
+  if (menuBtn && menuDropdown) {
+    menuBtn.addEventListener("click", () => {
+      menuDropdown.classList.toggle("hidden");
+    });
+
+    document.addEventListener("click", (e) => {
+      if (!menuDropdown.classList.contains("hidden")) {
+        const inside = menuDropdown.contains(e.target) || menuBtn.contains(e.target);
+        if (!inside) menuDropdown.classList.add("hidden");
+      }
     });
   }
 
-  jumpBtn.addEventListener('click', () => {
-    scrollToBottom({ smooth: true });
-    showJumpBtn(false);
-  });
+  // Typewriter (plain)
+  const typeInto = async (el, fullText, opts = {}) => {
+    const { cps = 55, chunkMin = 2, chunkMax = 8 } = opts;
+    const text = (fullText ?? "").toString();
+    el.textContent = "";
+    if (!text) return;
 
-  // Show jump button when user scrolls up
-  messagesEl?.addEventListener('scroll', () => {
-    if (!messagesEl) return;
-    showJumpBtn(!isNearBottom(messagesEl));
-  }, { passive: true });
+    const baseDelay = Math.max(10, Math.round(1000 / cps));
+    let i = 0;
 
-  // --- Helpers: view switching ---
-  function showThread() {
-    homeView.classList.add('hidden');
-    threadView.classList.remove('hidden');
+    while (i < text.length) {
+      const remaining = text.length - i;
+      const step = Math.min(
+        remaining,
+        Math.floor(Math.random() * (chunkMax - chunkMin + 1)) + chunkMin
+      );
 
-    document.body.classList.remove('home-mode');
-    document.body.classList.add('thread-mode');
+      el.textContent += text.slice(i, i + step);
+      i += step;
 
-    newTopicBtn.classList.remove('hidden');
-
-    // Make sure we land at bottom once entering thread
-    setTimeout(() => scrollToBottom({ smooth: false }), 0);
-  }
-
-  function showHome() {
-    homeView.classList.remove('hidden');
-    threadView.classList.add('hidden');
-
-    document.body.classList.add('home-mode');
-    document.body.classList.remove('thread-mode');
-
-    newTopicBtn.classList.add('hidden');
-    showJumpBtn(false);
-  }
-
-  // --- Message rendering ---
-  function addUserBubble(text) {
-    const wrap = document.createElement('div');
-    wrap.className = 'msg msg-user';
-    wrap.textContent = text;
-    messagesEl.appendChild(wrap);
-    return wrap;
-  }
-
-  function addAssistantBlock(text) {
-    const wrap = document.createElement('div');
-    wrap.className = 'msg msg-ai';
-    wrap.textContent = text;
-    messagesEl.appendChild(wrap);
-    return wrap;
-  }
-
-  // --- Enter-to-send behavior ---
-  composerInput?.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      composerForm.requestSubmit();
+      scrollToBottom();
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise(r => setTimeout(r, baseDelay));
     }
-  });
+  };
 
-  function escapeHTML(str) {
-    return str
-      .replaceAll('&', '&amp;')
-      .replaceAll('<', '&lt;')
-      .replaceAll('>', '&gt;')
-      .replaceAll('"', '&quot;')
-      .replaceAll("'", '&#039;');
-  }
+  // Streaming reader (plain while streaming)
+  const streamAnswerInto = async (assistantEl, payload, onFirstToken) => {
+    const res = await fetch("/ask-stream", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
 
-  // Very small "markdown-lite": **bold**, *italic*, `code`, newlines
-  function renderMarkdownLite(md) {
-    const escaped = escapeHTML(md);
+    if (!res.ok || !res.body) throw new Error(`stream HTTP ${res.status}`);
 
-    let html = escaped.replace(/`([^`]+)`/g, '<code>$1</code>');
-    html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-    html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
-    html = html.replace(/\n/g, '<br>');
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder("utf-8");
 
-    return html;
-  }
+    let gotAny = false;
+    let full = "";
 
-  function setComposerThinking(isThinking) {
-    const composerBar = document.getElementById('composerBar');
-    const input = document.getElementById('composerInput');
-    const sendBtn = document.getElementById('sendBtn');
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
 
-    if (isThinking) {
-      composerBar.classList.add('thinking');
-      input.disabled = true;
-      sendBtn.disabled = true;
-      input.placeholder = 'Nag-iisip…';
-    } else {
-      composerBar.classList.remove('thinking');
-      input.disabled = false;
-      sendBtn.disabled = false;
-      const isFollowUp = threadMemory.length > 0;
-      input.placeholder = isFollowUp ? 'Kasunod na tanong…' : 'Itanong mo dito…';
-      input.focus();
-    }
-  }
+      const chunk = decoder.decode(value, { stream: true });
+      if (!chunk) continue;
 
-  async function typeTextStreaming(el, text, msPerChar = 10) {
-    // Stick-to-bottom behavior: only auto-scroll if user was near bottom at start
-    let stick = isNearBottom(messagesEl);
+      const cleaned = chunk
+        .split("\n")
+        .map(line => (line.startsWith("data:") ? line.slice(5) : line))
+        .join("\n");
 
-    el.textContent = '';
-    for (let i = 0; i < text.length; i++) {
-      el.textContent += text[i];
-
-      // update scroll only if we should stick
-      if (stick) {
-        scrollToBottom({ smooth: false });
-      } else {
-        showJumpBtn(true);
+      if (!gotAny) {
+        gotAny = true;
+        if (typeof onFirstToken === "function") onFirstToken();
       }
 
-      // if user comes back to bottom while typing, re-enable stick
-      if (!stick && isNearBottom(messagesEl)) {
-        stick = true;
-        showJumpBtn(false);
-      }
-
-      await new Promise(r => setTimeout(r, msPerChar));
+      full += cleaned;
+      assistantEl.textContent = full.replace(/^\s+/, "");
+      scrollToBottom();
     }
-  }
 
-  function pushMemory(role, content) {
-    threadMemory.push({ role, content });
-    threadMemory = threadMemory.slice(-MAX_MEMORY_MESSAGES);
-  }
+    return { streamed: gotAny, finalText: (assistantEl.textContent || "").trim() };
+  };
 
-  // --- Submit handler ---
-  composerForm?.addEventListener('submit', async (e) => {
-    e.preventDefault();
+  const askJsonOnce = async (payload) => {
+    const res = await fetch("/ask", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json().catch(() => ({}));
+    return (data && (data.answer || data.output || data.text || data.response)) || "";
+  };
 
-    const q = composerInput.value.trim();
+  const sendQuestion = async () => {
+    const q = (composerInput.value || "").trim();
     if (!q) return;
 
-    showThread();
+    if (!homeView.classList.contains("hidden")) showThread();
 
-    // Add user bubble + ensure it is visible
-    addUserBubble(q);
+    composerInput.value = "";
+    autoGrow();
 
-    // Store user message
-    pushMemory('user', q);
+    addUserBlock(q);
+    threadMemory.push({ role: "user", content: q });
 
-    // Clear input and lock
-    composerInput.value = '';
+    const thinkingRow = addThinkingRow();
     setComposerThinking(true);
 
-    // If user is at/near bottom, keep view at bottom
-    if (isNearBottom(messagesEl)) scrollToBottom({ smooth: false });
+    const assistantEl = addAssistantBlock("");
 
-    // Thinking indicator
-    const thinkingEl = addAssistantBlock('Nag-iisip…');
-    if (isNearBottom(messagesEl)) scrollToBottom({ smooth: false });
+    const payload = { question: q, history: threadMemory };
 
     try {
-      const res = await fetch('/ask', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          question: q,
-          history: threadMemory
-        })
-      });
+      let removedThinking = false;
+      const removeThinking = () => {
+        if (removedThinking) return;
+        removedThinking = true;
+        fadeOutAndRemove(thinkingRow);
+      };
 
-      if (!res.ok) {
-        thinkingEl.textContent = `May error (${res.status}). Pakisubukan ulit.`;
-        return;
+      try {
+        const out = await streamAnswerInto(assistantEl, payload, removeThinking);
+        if (!out.streamed) throw new Error("stream returned no tokens");
+
+        // NOW finalize markdown after streaming completes
+        finalizeAssistantMarkdown(assistantEl);
+
+        threadMemory.push({ role: "assistant", content: out.finalText || "(empty)" });
+      } catch (streamErr) {
+        console.warn("Streaming failed, falling back to /ask:", streamErr);
+
+        const ans = await askJsonOnce(payload);
+        removeThinking();
+
+        const text = ans || "Walang sagot na bumalik. (Empty response)";
+        await typeInto(assistantEl, text, { cps: 60, chunkMin: 2, chunkMax: 8 });
+
+        // NOW finalize markdown after typing completes
+        finalizeAssistantMarkdown(assistantEl);
+
+        threadMemory.push({ role: "assistant", content: (assistantEl.textContent || "").trim() });
       }
-
-      const data = await res.json();
-      const answer = (data && data.answer) ? data.answer : 'Pasensya, walang sagot na bumalik.';
-
-      // Store assistant message ONCE (fixes your duplicate push bug)
-      pushMemory('assistant', answer);
-
-      // Stream typing
-      await typeTextStreaming(thinkingEl, answer, 8);
-
-      // Render markdown-lite after typing
-      thinkingEl.innerHTML = renderMarkdownLite(answer);
-
-      // If user stayed near bottom, land at bottom; otherwise show jump button
-      if (isNearBottom(messagesEl)) {
-        scrollToBottom({ smooth: true });
-        showJumpBtn(false);
-      } else {
-        showJumpBtn(true);
-      }
-
     } catch (err) {
-      thinkingEl.textContent = 'May problem sa koneksyon. Pakisubukan ulit.';
+      console.error(err);
+      fadeOutAndRemove(thinkingRow);
+      assistantEl.textContent = "May problem sa koneksyon. Pakisubukan ulit.";
     } finally {
       setComposerThinking(false);
+      scrollToBottom(true);
+    }
+  };
+
+  composerForm.addEventListener("submit", (e) => {
+    e.preventDefault();
+    sendQuestion();
+  });
+
+  composerInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      sendQuestion();
     }
   });
 
-  // --- New topic resets ---
-  newTopicBtn?.addEventListener('click', () => {
-    messagesEl.innerHTML = '';
-    composerInput.value = '';
-    threadMemory = [];
-    showHome();
-    setComposerThinking(false);
+  composerInput.addEventListener("input", autoGrow);
+
+  if (newTopicBtn) {
+    newTopicBtn.addEventListener("click", () => {
+      messagesEl.innerHTML = "";
+      composerInput.value = "";
+      autoGrow();
+      threadMemory = [];
+      setComposerThinking(false);
+      showHome();
+    });
+  }
+
+  const updateKbVar = () => {
+    try {
+      if (!window.visualViewport) return;
+      const vv = window.visualViewport;
+      const kb = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+      document.documentElement.style.setProperty("--kb", `${Math.round(kb)}px`);
+      syncComposerReserve();
+    } catch (_) {}
+  };
+
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener("resize", updateKbVar);
+    window.visualViewport.addEventListener("scroll", updateKbVar);
+  }
+  window.addEventListener("resize", () => {
+    syncComposerReserve();
+    updateKbVar();
   });
 
-  // Start in home
+  // Start
   showHome();
+  autoGrow();
+  syncComposerReserve();
+  updateKbVar();
 })();

@@ -4,48 +4,51 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>BuhayOFW AI</title>
+  <meta name="google" content="notranslate" />
 
-  <link rel="stylesheet" href="./ui.css?v=3" />
-  <meta name="google" content="notranslate">
+  <!-- cache-bust -->
+  <link rel="stylesheet" href="./ui.css?v=9" />
 </head>
 
-<body>
+<body class="home-mode">
   <!-- Fixed Header -->
   <header id="topbar">
     <div class="topbar-left">
-      <img id="logo" src="./assets/logo-apple.png" alt="BuhayOFW"
-           onerror="this.style.display='none'; document.getElementById('logoText').style.display='block';" />
+      <img id="logo" src="./assets/logo.png" alt="BuhayOFW" onerror="this.style.display='none';document.getElementById('logoText').style.display='block';" />
       <div id="logoText" style="display:none;">BUHAYOFW.com</div>
     </div>
 
     <div class="topbar-right">
-      <button id="menuBtn" aria-label="Menu" type="button">☰</button>
+      <button id="menuBtn" aria-label="Menu" type="button">≡</button>
+      <nav id="menuDropdown" class="menu hidden" aria-label="Menu Dropdown">
+        <a href="/legacy" target="_blank" rel="noopener">Legacy site</a>
+      </nav>
     </div>
-
-    <nav id="menuDropdown" class="menu hidden" aria-label="Menu Dropdown">
-      <a id="legacyLink" href="https://buhayofw.com" target="_blank" rel="noopener">Legacy site</a>
-    </nav>
   </header>
 
-  <!-- Main App -->
-  <main id="app">
-    <!-- HOME VIEW (empty state) -->
+  <!-- App -->
+  <div id="app">
+    <!-- HOME VIEW -->
     <section id="homeView">
       <div id="homeCenter">
-        <img id="homeMascot"
-             src="./assets/mascot-head.png"
-             alt=""
-             onerror="this.style.display='none';" />
+        <div id="homeMascotWrap">
+          <img
+            id="homeMascot"
+            src="./assets/ai-head.png"
+            alt=""
+            onerror="this.style.display='none';"
+          />
+        </div>
 
         <h1 id="homeTitle">Ano gusto mong itanong?</h1>
       </div>
     </section>
 
-    <!-- THREAD VIEW (after first question) -->
+    <!-- THREAD VIEW -->
     <section id="threadView" class="hidden">
       <div id="messages"></div>
     </section>
-  </main>
+  </div>
 
   <!-- Fixed Composer -->
   <footer id="composerBar">
@@ -54,23 +57,23 @@
         <textarea
           id="composerInput"
           rows="1"
-          placeholder="Itanong mo dito…"
+          placeholder="Itanong mo dito..."
           aria-label="Question input"
         ></textarea>
 
-        <button id="sendBtn" type="submit" aria-label="Send">➤</button>
+<button id="sendBtn" type="submit" aria-label="Send">
+  <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+    <path d="M4 20V4l17 8-17 8zm2-3.3 11.4-4.7L6 7.3v3.1l6.2 1.6L6 13.6v3.1z"></path>
+  </svg>
+</button>
+
       </form>
 
-      <!-- Only visible in thread mode -->
-      <button id="newTopicBtn" class="hidden" type="button">New topic</button>
+      <button id="newTopicBtn" type="button" class="hidden">New topic</button>
     </div>
   </footer>
 
-  <!-- Jump to latest (single, unique ID) -->
-  <button id="jumpBtn" class="jump-btn hidden" type="button" aria-label="Jump to latest">
-    ↓
-  </button>
-
-  <script src="./app.js"></script>
+  <script src="./app.js?v=4"></script>
 </body>
 </html>
+
