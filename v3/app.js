@@ -66,7 +66,7 @@
 
   const syncComposerReserve = () => {
     const h = composerBar.getBoundingClientRect().height || 150;
-    document.documentElement.style.setProperty("--composer-reserve", `${Math.ceil(h) + 20}px`);
+    document.documentElement.style.setProperty("--composer-reserve", `${Math.ceil(h) + 50}px`);
   };
 
   /* =========================
@@ -235,7 +235,7 @@
       el.textContent += text.slice(i, i + step);
       i += step;
 
-      scrollToBottom();
+      scrollToBottom(true);
       // eslint-disable-next-line no-await-in-loop
       await new Promise(r => setTimeout(r, baseDelay));
     }
@@ -276,7 +276,7 @@
 
       full += cleaned;
       assistantEl.textContent = full.replace(/^\s+/, "");
-      scrollToBottom();
+      scrollToBottom(true);
     }
 
     return { streamed: gotAny, finalText: (assistantEl.textContent || "").trim() };
@@ -366,6 +366,11 @@
 
   composerInput.addEventListener("input", autoGrow);
 
+composerInput.addEventListener("focus", () => {
+  scrollToBottom(true);
+});
+
+
   if (newTopicBtn) {
     newTopicBtn.addEventListener("click", () => {
       messagesEl.innerHTML = "";
@@ -396,9 +401,34 @@
     updateKbVar();
   });
 
+
   // Start
   showHome();
   autoGrow();
   syncComposerReserve();
   updateKbVar();
+
+// ===== FINAL: pin topbar to visual viewport (mobile keyboard safe) =====
+(function(){
+  const topbar = document.getElementById("topbar");
+  const vv = window.visualViewport;
+  if (!topbar || !vv) return;
+
+  const sync = () => {
+    const y =
+      typeof vv.pageTop === "number"
+        ? vv.pageTop
+        : (vv.offsetTop || 0);
+
+    topbar.style.transform = `translate3d(0, ${y}px, 0)`;
+  };
+
+  vv.addEventListener("resize", sync);
+  vv.addEventListener("scroll", sync);
+  window.addEventListener("scroll", sync, { passive: true });
+
+  sync();
+})();
+
+
 })();
