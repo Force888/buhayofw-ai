@@ -1,5 +1,31 @@
 (() => {
   "use strict";
+  // ===== Anonymous device id (for rate limiting) =====
+  function getOrCreateDeviceId() {
+    const KEY = "kb_device_id";
+
+    // 1) localStorage
+    try {
+      const existing = localStorage.getItem(KEY);
+      if (existing) return existing;
+    } catch (_) {}
+
+    // 2) create new
+    const id =
+      (window.crypto && crypto.randomUUID && crypto.randomUUID()) ||
+      ("dev_" + Math.random().toString(36).slice(2) + Date.now().toString(36));
+
+    // 3) save to localStorage
+    try { localStorage.setItem(KEY, id); } catch (_) {}
+
+    // 4) also save as cookie (1 year)
+    try {
+      document.cookie =
+        `kb_device_id=${encodeURIComponent(id)}; path=/; max-age=${60 * 60 * 24 * 365}; SameSite=Lax`;
+    } catch (_) {}
+
+    return id;
+  }
 
   const homeView = document.getElementById("homeView");
   const threadView = document.getElementById("threadView");
@@ -20,6 +46,8 @@
   }
 
   let threadMemory = [];
+
+  const DEVICE_ID = getOrCreateDeviceId();
 
   const setMode = (mode) => {
     document.body.classList.remove("home-mode", "thread-mode");
@@ -80,6 +108,12 @@
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;");
 
+const renderPlainStreaming = (raw) => {
+  const safe = escapeHtml(raw ?? "");
+  // Convert newlines to <br> so spacing is stable while streaming
+  return safe.replace(/\n/g, "<br>");
+};
+
   const inlineMd = (s) => {
     let t = escapeHtml(s);
 
@@ -111,21 +145,30 @@
     for (const line of lines) {
       const trimmed = line.trim();
 
-      // blank line
-      if (!trimmed) {
-        closeLists();
-        html += "<br>";
-        continue;
-      }
+// blank line
+if (!trimmed) {
+  // If we're inside a list, DON'T close it (keeps numbering 1,2,3...)
+  if (inOl || inUl) {
+    continue;
+  }
+  html += "<br>";
+  continue;
+}
 
       // numbered list: "1. item"
-      const mOl = trimmed.match(/^(\d+)\.\s+(.*)$/);
-      if (mOl) {
-        if (inUl) { html += "</ul>"; inUl = false; }
-        if (!inOl) { html += "<ol>"; inOl = true; }
-        html += `<li>${inlineMd(mOl[2])}</li>`;
-        continue;
-      }
+const mOl = trimmed.match(/^(\d+)\.\s+(.*)$/);
+if (mOl) {
+  const n = parseInt(mOl[1], 10) || 1;
+
+  if (inUl) { html += "</ul>"; inUl = false; }
+
+  // IMPORTANT: if we are starting a NEW <ol>, set the start number
+  if (!inOl) { html += `<ol start="${n}">`; inOl = true; }
+
+  html += `<li>${inlineMd(mOl[2])}</li>`;
+  continue;
+}
+
 
       // bullet list: "- item" or "* item"
       const mUl = trimmed.match(/^[-*]\s+(.*)$/);
@@ -145,11 +188,12 @@
     return html;
   };
 
-  const finalizeAssistantMarkdown = (el) => {
-    if (!el) return;
-    const raw = el.textContent || "";
-    el.innerHTML = renderMarkdown(raw);
-  };
+const finalizeAssistantMarkdown = (el, rawOverride) => {
+  if (!el) return;
+  const raw = (rawOverride != null) ? String(rawOverride) : (el.textContent || "");
+  el.innerHTML = renderMarkdown(raw);
+};
+
 
   const addUserBlock = (text) => {
     const div = document.createElement("div");
@@ -215,39 +259,42 @@
     });
   }
 
-  // Typewriter (plain)
-  const typeInto = async (el, fullText, opts = {}) => {
-    const { cps = 55, chunkMin = 2, chunkMax = 8 } = opts;
-    const text = (fullText ?? "").toString();
-    el.textContent = "";
-    if (!text) return;
+// Typewriter (HTML-aware, matches final spacing)
+const typeInto = async (el, fullText, opts = {}) => {
+  const { cps = 55 } = opts;
+  const text = (fullText ?? "").toString();
 
-    const baseDelay = Math.max(10, Math.round(1000 / cps));
-    let i = 0;
+  el.innerHTML = "";
+  if (!text) return;
 
-    while (i < text.length) {
-      const remaining = text.length - i;
-      const step = Math.min(
-        remaining,
-        Math.floor(Math.random() * (chunkMax - chunkMin + 1)) + chunkMin
-      );
+  const baseDelay = Math.max(10, Math.round(1000 / cps));
 
-      el.textContent += text.slice(i, i + step);
-      i += step;
+  let buffer = "";
 
-      scrollToBottom(true);
-      // eslint-disable-next-line no-await-in-loop
-      await new Promise(r => setTimeout(r, baseDelay));
-    }
-  };
+  for (let i = 0; i < text.length; i++) {
+    buffer += text[i];
+
+    // render progressively using the SAME markdown renderer
+    el.innerHTML = renderMarkdown(buffer);
+
+    scrollToBottom(true);
+    // eslint-disable-next-line no-await-in-loop
+    await new Promise(r => setTimeout(r, baseDelay));
+  }
+};
+
 
   // Streaming reader (plain while streaming)
   const streamAnswerInto = async (assistantEl, payload, onFirstToken) => {
     const res = await fetch("/ask-stream", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "X-Device-Id": DEVICE_ID
+      },
       body: JSON.stringify(payload)
     });
+
 
     if (!res.ok || !res.body) throw new Error(`stream HTTP ${res.status}`);
 
@@ -275,19 +322,25 @@
       }
 
       full += cleaned;
-      assistantEl.textContent = full.replace(/^\s+/, "");
+assistantEl.innerHTML = renderPlainStreaming(full.replace(/^\s+/, ""));
       scrollToBottom(true);
     }
 
-    return { streamed: gotAny, finalText: (assistantEl.textContent || "").trim() };
+return { streamed: gotAny, finalText: full.trim() };
   };
 
   const askJsonOnce = async (payload) => {
-    const res = await fetch("/ask", {
+      const res = await fetch("/ask", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "X-Device-Id": DEVICE_ID
+      },
       body: JSON.stringify(payload)
     });
+
+
+
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json().catch(() => ({}));
     return (data && (data.answer || data.output || data.text || data.response)) || "";
@@ -325,8 +378,7 @@
         if (!out.streamed) throw new Error("stream returned no tokens");
 
         // NOW finalize markdown after streaming completes
-        finalizeAssistantMarkdown(assistantEl);
-
+finalizeAssistantMarkdown(assistantEl, out.finalText);
         threadMemory.push({ role: "assistant", content: out.finalText || "(empty)" });
       } catch (streamErr) {
         console.warn("Streaming failed, falling back to /ask:", streamErr);
@@ -336,11 +388,12 @@
 
         const text = ans || "Walang sagot na bumalik. (Empty response)";
         await typeInto(assistantEl, text, { cps: 60, chunkMin: 2, chunkMax: 8 });
+// NOW finalize markdown after typing completes (USE RAW TEXT so newlines stay)
+finalizeAssistantMarkdown(assistantEl, text);
 
-        // NOW finalize markdown after typing completes
-        finalizeAssistantMarkdown(assistantEl);
+threadMemory.push({ role: "assistant", content: (text || "").trim() });
 
-        threadMemory.push({ role: "assistant", content: (assistantEl.textContent || "").trim() });
+
       }
     } catch (err) {
       console.error(err);
